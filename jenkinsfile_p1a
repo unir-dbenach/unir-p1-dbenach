@@ -1,0 +1,51 @@
+pipeline {
+    agent any
+    stages {
+        stage('GetCode') {
+            steps {
+                cleanWs()
+                git credentialsId: 'GitHubROpwd', url: 'https://github.com/unir-dbenach/unir-p1-dbenach.git'
+            }
+        }
+        stage('Build') {
+            steps {
+                echo "Etapa de build"
+                sh "pwd"
+                sh "ls -l"
+                echo "${WORKSPACE}"
+            }
+        }
+        stage ('Testing') {
+            parallel {
+                stage ('Unit') {
+                    steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            sh '''
+                                export PYTHONPATH=${WORKSPACE}
+                                pytest --junit-xml=result-unit.xml test/unit
+                            '''
+                        }
+                    }
+                }
+                stage ('Rest') {
+                    steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            sh '''
+                                export FLASK_APP=app/api.py
+                                export FLASKDEV=development
+                                flask run &
+                                export PYTHONPATH=${WORKSPACE}
+                                pytest --junit-xml=result-rest.xml test/rest
+                            '''    
+                        }
+                    }
+                }
+            }
+        }
+        stage ('Results') {
+            steps {
+                junit 'result*.xml'
+            }
+        }
+    }
+}
