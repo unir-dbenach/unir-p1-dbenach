@@ -35,6 +35,7 @@ pipeline {
                                 export FLASKDEV=development
                                 flask run &
                                 java -jar wiremock-standalone-3.10.0.jar --port 9090 --root-dir ${WORKSPACE}/test/wiremock &
+                                sleep 10
                                 export PYTHONPATH=${WORKSPACE}
                                 pytest --junit-xml=result-rest.xml test/rest
                             '''    
