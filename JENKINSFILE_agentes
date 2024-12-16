@@ -2,7 +2,7 @@ pipeline {
     options {
         skipDefaultCheckout true
     }
-    agent master
+    agent any
     stages {
         stage('GetCode') {
             agent { label 'Agent1' }
