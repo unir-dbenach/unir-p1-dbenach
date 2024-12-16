@@ -141,11 +141,11 @@ pipeline {
                 echo "Hemos definido un post que siempre se ejecuta para limpiar la ejecución de la pipeline:"
                 node('Agent1') {
                     echo "Limpio el workspace del agente1"
-                    //deleteDir()
+                    deleteDir()
                 }
                 node('Agent2') {
                     echo "Limpio el workspace del agente2"
-                    //deleteDir()
+                    deleteDir()
                 }
                 node('Agent3') {
                     echo "Paro los contenedores instanciados en el agente3:"
@@ -154,7 +154,7 @@ pipeline {
                         docker stop flask-${env.BUILD_ID}
                     """
                     echo "Limpio el workspace del agente3"
-                    //deleteDir()
+                    deleteDir()
                 }
             }
         }
