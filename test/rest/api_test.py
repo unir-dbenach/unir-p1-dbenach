@@ -5,7 +5,7 @@ from urllib.request import urlopen
 
 import pytest
 
-BASE_URL = "http://192.168.71.10localhost:5000"
+BASE_URL = "http://192.168.71.10:5000"
 BASE_URL_MOCK = "http://192.168.71.10:9090"
 DEFAULT_TIMEOUT = 2  # in secs
 
