@@ -1,6 +1,18 @@
 pipeline {
     agent any
     stages {
+        stage('Checkout') {
+            steps {
+                checkout scm: [
+                    $class: 'GitSCM',
+                    branches: [[name: '*/master']],
+                    doGenerateSubmoduleConfigurations: false,
+                    extensions: [
+                        [$class: 'CloneOption', noCheckout: true]  // Evita el checkout automàtic
+                    ]
+                ]
+            }
+        }
         stage('GetCode') {
             agent { label 'Agent1' }
             steps {
@@ -160,3 +172,4 @@ pipeline {
         }
     }
 }
+
