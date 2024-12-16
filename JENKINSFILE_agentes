@@ -1,5 +1,8 @@
 pipeline {
-    agent any
+    options {
+        skipDefaultCheckout true
+    }
+    agent master
     stages {
         stage('GetCode') {
             agent { label 'Agent1' }
