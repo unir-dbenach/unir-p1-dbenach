@@ -1,52 +1,92 @@
 pipeline {
+    options {
+        skipDefaultCheckout true
+    }
     agent any
     stages {
         stage('GetCode') {
+            agent { label 'Agent1' }
             steps {
+                echo "Limpio el workspace:"
                 cleanWs()
-                git credentialsId: 'GitHubROpwd', url: 'https://github.com/unir-dbenach/unir-p1-dbenach.git'
+                echo "Bajo el código del depósito de GitHub:"
+                git url: 'https://github.com/unir-dbenach/unir-p1-dbenach.git'
             }
         }
-        stage('Build') {
+        stage ('Unit') {
+            agent { label 'Agent1' }
             steps {
-                echo "Etapa de build"
-                sh "pwd"
-                sh "ls -l"
-                echo "${WORKSPACE}"
+                echo "Ejecutamos el test UNIT:"
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    sh '''
+                        export PYTHONPATH=${WORKSPACE}
+                        pytest --junit-xml=result-unit.xml test/unit
+                        ls -l
+                        pwd
+                    '''
+                }
             }
         }
-        stage ('Testing') {
-            parallel {
-                stage ('Unit') {
-                    steps {
-                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                            sh '''
-                                export PYTHONPATH=${WORKSPACE}
-                                pytest --junit-xml=result-unit.xml test/unit
-                            '''
-                        }
-                    }
-                }
-                stage ('Rest') {
-                    steps {
-                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                            sh '''
-                                export FLASK_APP=app/api.py
-                                export FLASKDEV=development
-                                flask run &
-                                java -jar /root/wiremock-standalone-3.10.0.jar --port 9090 --root-dir ${WORKSPACE}/test/wiremock &
-                                sleep 10
-                                export PYTHONPATH=${WORKSPACE}
-                                pytest --junit-xml=result-rest.xml test/rest
-                            '''    
-                        }
-                    }
+        stage ('Rest') {
+            agent { label 'Agent1' }
+            steps {
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    echo "Arrancamos els entorno de pruebas:"
+                    sh """
+                        docker run -d --name wiremock-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
+                        docker run -d --name flask-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
+                    """
+                    echo " Esperamos a que el entorno de pruebas esté disponible para realizar las pruebas:"
+                    sh '''
+                        for i in $(seq 0 1 10); do
+                            if nc -z 192.168.71.10 9090; then
+                                echo "Puerto 9090 disponible. Comprobamos el puerto 5000."
+                                if nc -z 192.168.71.10 5000; then
+                                    echo "Puerto 5000 también disponible. Lanzamos el test." 
+                                    export PYTHONPATH=${WORKSPACE}
+                                    pytest --junit-xml=result-rest.xml test/rest
+                                    ls -l
+                                    pwd
+                                    exit 0
+                                else
+                                    echo "El puerto 5000 aun no está levantado. Espero un segundo ($i)."
+                                fi
+                            else
+                                echo "El puerto 9090 todavia no se ha levantado. Espero un segundo. ($i)"
+                            fi
+                            sleep 1
+                        done
+                        echo "La aplicación no se ha levantado en el tiempo esperado. Abortamos el test."
+                        exit 1
+                    '''
                 }
             }
         }
         stage ('Results') {
+            agent { label 'Agent1' }
             steps {
+                sh '''
+                  ls -l
+                  pwd
+                '''
+                echo "Ejecutamos junit para procesar los dos ficheros generados (el de unit ya existe en este nodo)."
                 junit 'result*.xml'
+            }
+        }
+    }
+    post {
+        always {
+            script {
+                echo "Hemos definido un post que siempre se ejecuta para limpiar la ejecución de la pipeline:"
+                node('Agent1') {
+                    echo "Paro los contenedores instanciados:"
+                    sh """
+                        docker stop wiremock-${env.BUILD_ID}
+                        docker stop flask-${env.BUILD_ID}
+                    """
+                    echo "Limpio el workspace del agente1"
+                    deleteDir()
+                }
             }
         }
     }
