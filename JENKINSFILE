@@ -16,48 +16,36 @@ pipeline {
         stage ('IniciaEntornoWeb') {
             agent { label 'Agent1' }
             steps {
-                echo "Arrancamos el entorno de pruebas:"
+                echo "Arranco el entorno web de testing:"
                 sh """
                     docker run -d --name wiremock-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
                     docker run -d --name flask-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
                 """
-                echo " Esperamos a que el entorno de pruebas esté disponible para realizar las pruebas:"
+                echo " Espero a que el entorno de pruebas esté disponible para realizar las pruebas:"
                 sh ''' 
                     for i in $(seq 0 1 10); do
                         if nc -z 192.168.71.10 9090; then
-                            echo "Puerto 9090 disponible. Comprobamos el puerto 5000."
+                            echo "Puerto 9090 disponible. Compruebo el puerto 5000."
                             if nc -z 192.168.71.10 5000; then
-                                echo "Puerto 5000 también disponible. Podemos lanzar las pruebas." 
+                                echo "Puerto 5000 también disponible. Puedo lanzar las pruebas." 
                                 exit 0
                             else
                                 echo "El puerto 5000 aun no está levantado. Espero un segundo ($i)."
                             fi
                         else
-                            echo "El puerto 9090 todavia no se ha levantado. Espero un segundo. ($i)"
+                            echo "El puerto 9090 aun no está levantado. Espero un segundo. ($i)"
                         fi
                         sleep 1
                     done
-                    echo "La aplicación no se ha levantado en el tiempo esperado. Abortamos el test."
+                    echo "La aplicación no se ha levantado en el tiempo esperado (10 segundos). Aborto el test."
                     exit 1
                 '''    
             }   
         }
-        stage ('Unit') {
-            agent { label 'Agent1' }
-            steps {
-                echo "Ejecutamos las pruebas unitarias:"
-                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    sh '''
-                        export PYTHONPATH=${WORKSPACE}
-                        pytest --junit-xml=result-unit.xml test/unit
-                    '''
-                    junit 'result-unit.xml'
-                }
-            }
-        }
         stage ('Rest') {
             agent { label 'Agent1' }
             steps {
+                echo "Lanzo las pruebas de integración."
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     echo "Lanzamos las pruebas de integración."
                     sh '''
@@ -68,15 +56,13 @@ pipeline {
                 junit 'result-rest.xml'
             }
         }
-        stage ('Coverage') {
+        stage ('Unit_Coverage') {
             agent { label 'Agent1' }
             steps {
-                echo "Ejecutamos las pruebas de cobertura:"
+                echo "Lanzo las pruebas unitarias y de cobertura:"
                 sh '''
-                    python3 -m coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest test/unit
+                    python3 -m coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest --junit-xml=result-unit.xml test/unit
                     python3 -m coverage xml
-                    ls -l
-                    pwd
                 '''
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     cobertura coberturaReportFile: 'coverage.xml', 
@@ -88,12 +74,13 @@ pipeline {
                               conditionalCoverageTargets: '100,80,90',
                               lineCoverageTargets: '100,85,95'
                 }
+                junit 'result-unit.xml'
             }
         }
         stage ('Static') {
             agent { label 'Agent1' }
             steps {
-                echo "Ejecutamos las pruebas de cógigo estático:"
+                echo "Lanzo las pruebas de cógigo estático:"
                 sh '''
                     python3 -m flake8 --exit-zero --format=pylint app > flake8.out
                 '''
@@ -103,7 +90,7 @@ pipeline {
         stage ('Security') {
             agent { label 'Agent1' }
             steps {
-                echo "Ejecutamos las pruebas de seguridad:"
+                echo "Lanzo las pruebas de seguridad:"
                 sh '''
                     python3 -m bandit --exit-zero  -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
                     '''
@@ -113,7 +100,7 @@ pipeline {
         stage ('Performance') {
             agent { label 'Agent1' }
             steps {
-                echo "Ejecutamos las pruebas de rendimiento:"
+                echo "Lanzo las pruebas de rendimiento:"
                 sh '''
                     /opt/jmeter/bin/jmeter -n -t test/jmeter/flask.jmx -f -l flask.jtl
                 '''
@@ -124,7 +111,7 @@ pipeline {
     post {
         always {
             script {
-                echo "Hemos definido un post que siempre se ejecuta para limpiar la ejecución de la pipeline:"
+                echo "Ejecuto el post para limpiar la ejecución del pipeline (esta sección se ejecuta siempre aunque el build se marque como fallido):"
                 node('Agent1') {
                     echo "Paro los contenedores instanciados:"
                     sh """
