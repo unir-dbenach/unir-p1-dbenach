@@ -13,17 +13,45 @@ pipeline {
                 git url: 'https://github.com/unir-dbenach/unir-p1-dbenach.git'
             }
         }
+        stage ('IniciaEntornoWeb') {
+            agent { label 'Agent1' }
+            steps {
+                echo "Arrancamos el entorno de pruebas:"
+                sh """
+                    docker run -d --name wiremock-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
+                    docker run -d --name flask-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
+                """
+                echo " Esperamos a que el entorno de testing esté disponible para realizar las pruebas:"
+                sh ''' 
+                    for i in $(seq 0 1 10); do
+                        if nc -z 192.168.71.10 9090; then
+                            echo "Puerto 9090 disponible. Comprobamos el puerto 5000."
+                            if nc -z 192.168.71.10 5000; then
+                                echo "Puerto 5000 también disponible. Podemos lanzar las pruebas." 
+                                exit 0
+                            else
+                                echo "El puerto 5000 aun no está levantado. Espero un segundo ($i)."
+                            fi
+                        else
+                            echo "El puerto 9090 aun no está levantado. Espero un segundo. ($i)"
+                        fi
+                        sleep 1
+                    done
+                    echo "La aplicación no se ha levantado en el tiempo esperado. Abortamos el test."
+                    exit 1
+                '''    
+            }   
+        }
         stage ('Unit') {
             agent { label 'Agent1' }
             steps {
-                echo "Ejecutamos el test UNIT:"
+                echo "Ejecutamos las pruebas unitarias:"
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     sh '''
                         export PYTHONPATH=${WORKSPACE}
                         pytest --junit-xml=result-unit.xml test/unit
-                        ls -l
-                        pwd
                     '''
+                    junit 'result-unit.xml'
                 }
             }
         }
@@ -31,46 +59,65 @@ pipeline {
             agent { label 'Agent1' }
             steps {
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    echo "Arrancamos els entorno de pruebas:"
-                    sh """
-                        docker run -d --name wiremock-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
-                        docker run -d --name flask-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
-                    """
-                    echo " Esperamos a que el entorno de pruebas esté disponible para realizar las pruebas:"
+                    echo "Lanzamos las pruebas de integración."
                     sh '''
-                        for i in $(seq 0 1 10); do
-                            if nc -z 192.168.71.10 9090; then
-                                echo "Puerto 9090 disponible. Comprobamos el puerto 5000."
-                                if nc -z 192.168.71.10 5000; then
-                                    echo "Puerto 5000 también disponible. Lanzamos el test." 
-                                    export PYTHONPATH=${WORKSPACE}
-                                    pytest --junit-xml=result-rest.xml test/rest
-                                    ls -l
-                                    pwd
-                                    exit 0
-                                else
-                                    echo "El puerto 5000 aun no está levantado. Espero un segundo ($i)."
-                                fi
-                            else
-                                echo "El puerto 9090 todavia no se ha levantado. Espero un segundo. ($i)"
-                            fi
-                            sleep 1
-                        done
-                        echo "La aplicación no se ha levantado en el tiempo esperado. Abortamos el test."
-                        exit 1
+                        export PYTHONPATH=${WORKSPACE}
+                        pytest --junit-xml=result-rest.xml test/rest
                     '''
+                }
+                junit 'result-rest.xml'
+            }
+        }
+        stage ('Coverage') {
+            agent { label 'Agent1' }
+            steps {
+                echo "Ejecutamos las pruebas de cobertura:"
+                sh '''
+                    python3 -m coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest test/unit
+                    python3 -m coverage xml
+                    ls -l
+                    pwd
+                '''
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    cobertura coberturaReportFile: 'coverage.xml', 
+                              autoUpdateHealth: false,
+                              autoUpdateStability: false,
+                              failUnhealthy: true,
+                              failUnstable: false,
+                              onlyStable: false,
+                              conditionalCoverageTargets: '100,80,90',
+                              lineCoverageTargets: '100,85,95'
                 }
             }
         }
-        stage ('Results') {
+        stage ('Static') {
             agent { label 'Agent1' }
             steps {
+                echo "Ejecutamos las pruebas de cógigo estático:"
                 sh '''
-                  ls -l
-                  pwd
+                    python3 -m flake8 --exit-zero --format=pylint app > flake8.out
                 '''
-                echo "Ejecutamos junit para procesar los dos ficheros generados (el de unit ya existe en este nodo)."
-                junit 'result*.xml'
+                recordIssues tools: [flake8(name: 'Flake8', pattern: 'flake8.out')], qualityGates: [[threshold: 8, type: 'TOTAL', unstable: true], [threshold: 10, type: 'TOTAL', unstable: false]]
+            }
+        }
+        stage ('Security') {
+            agent { label 'Agent1' }
+            steps {
+                echo "Ejecutamos las pruebas de seguridad:"
+                sh '''
+                    python3 -m bandit --exit-zero  -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
+                    '''
+                recordIssues tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')], qualityGates: [[threshold: 2, type: 'TOTAL', unstable: true], [threshold: 4, type: 'TOTAL', unstable: false]]
+            }
+        }
+        stage ('Performance') {
+            agent { label 'Agent1' }
+            steps {
+                echo "Ejecutamos las pruebas de rendimiento:"
+                sh '''
+                    /opt/jmeter/bin/jmeter -n -t test/jmeter/flask.jmx -f -l flask.jtl
+                '''
+                perfReport sourceDataFiles: 'flask.jtl'
             }
         }
     }
