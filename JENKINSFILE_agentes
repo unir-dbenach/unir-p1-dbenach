@@ -33,58 +33,58 @@ pipeline {
                 cleanWs()
             }
         }
-        stage ('IniciaEntornoWeb') {
-            agent { label 'docker' }
-            steps {
-                echo "Limpio el workspace al inicio de la ejecución del stage"
-                cleanWs()
-                    
-                echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
-                echo "${WORKSPACE}"
-                sh '''
-                    echo "whoami: "`whoami`
-                    echo "hostname: "`hostname`
-                    echo "pwd: "`pwd`
-                '''
-                    
-                echo "Recupero los ficheros de código necesarios:"
-                unstash 'code'
-                unstash 'wmMapping'
-                    
-                echo "Arranco el entorno web de testing:"
-                sh """
-                    docker run -d --name wiremock-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
-                    docker run -d --name flask-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
-                """
-                    
-                echo " Espero a que el entorno de pruebas esté disponible para realizar las pruebas:"
-                sh ''' 
-                    for i in $(seq 0 1 10); do
-                        if nc -z 192.168.71.10 9090; then
-                            echo "Puerto 9090 disponible. Compruebo el puerto 5000."
-                            if nc -z 192.168.71.10 5000; then
-                                echo "Puerto 5000 también disponible. Puedo lanzar las pruebas." 
-                                exit 0
-                            else
-                                echo "El puerto 5000 aun no está levantado. Espero un segundo ($i)."
-                            fi
-                        else
-                            echo "El puerto 9090 aun no está levantado. Espero un segundo. ($i)"
-                        fi
-                        sleep 1
-                    done
-                    echo "La aplicación no se ha levantado en el tiempo esperado (10 segundos). Aborto el test."
-                    exit 1
-                '''    
-                    
-                echo "Limpio el workspace al final de la ejecución del stage"
-                cleanWs()
-            }   
-        }
         stage ('Testing') {    // Ejecutamos en paralelo los stages que levantan la aplicación y los tests uni y rest.
             parallel {
-                stage ('TestingOnWeb') {
+                stage ('OnWeb') {
 		    stages {
+                        stage ('StartWeb') {
+                            agent { label 'docker' }
+                            steps {
+                                echo "Limpio el workspace al inicio de la ejecución del stage"
+                                cleanWs()
+                                    
+                                echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
+                                echo "${WORKSPACE}"
+                                sh '''
+                                    echo "whoami: "`whoami`
+                                    echo "hostname: "`hostname`
+                                    echo "pwd: "`pwd`
+                                '''
+                                    
+                                echo "Recupero los ficheros de código necesarios:"
+                                unstash 'code'
+                                unstash 'wmMapping'
+                                    
+                                echo "Arranco el entorno web de testing:"
+                                sh """
+                                    docker run -d --name wiremock-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
+                                    docker run -d --name flask-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
+                                """
+                                    
+                                echo " Espero a que el entorno de pruebas esté disponible para realizar las pruebas:"
+                                sh ''' 
+                                    for i in $(seq 0 1 10); do
+                                        if nc -z 192.168.71.10 9090; then
+                                            echo "Puerto 9090 disponible. Compruebo el puerto 5000."
+                                            if nc -z 192.168.71.10 5000; then
+                                                echo "Puerto 5000 también disponible. Puedo lanzar las pruebas." 
+                                                exit 0
+                                            else
+                                                echo "El puerto 5000 aun no está levantado. Espero un segundo ($i)."
+                                            fi
+                                        else
+                                            echo "El puerto 9090 aun no está levantado. Espero un segundo. ($i)"
+                                        fi
+                                        sleep 1
+                                    done
+                                    echo "La aplicación no se ha levantado en el tiempo esperado (10 segundos). Aborto el test."
+                                    exit 1
+                                '''    
+                                    
+                                echo "Limpio el workspace al final de la ejecución del stage"
+                                cleanWs()
+                            }   
+                        }
                         stage ('Rest') {
                             agent { label 'python' }
                             steps {
