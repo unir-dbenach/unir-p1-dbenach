@@ -83,36 +83,67 @@ pipeline {
         }
         stage ('Testing') {    // Ejecutamos en paralelo los stages que levantan la aplicación y los tests uni y rest.
             parallel {
-                stage ('Rest') {
-                    agent { label 'python' }
-                    steps {
-                        echo "Limpio el workspace al inicio de la ejecución del stage"
-                        cleanWs()
-                        
-                        echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
-                        echo "${WORKSPACE}"
-                        sh '''
-                            echo "whoami: "`whoami`
-                            echo "hostname: "`hostname`
-                            echo "pwd: "`pwd`
-                        '''
-                        
-                        echo "Recupero los ficheros de código necesarios:"
-                        unstash 'testRest'
-                        unstash 'pytestIni'
-                        
-                        echo "Lanzo las pruebas de integración."
-                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                            echo "Lanzamos las pruebas de integración."
-                            sh '''
-                                export PYTHONPATH=${WORKSPACE}
-                                pytest --junit-xml=result-rest.xml test/rest
-                            '''
+                stage ('TestingOnWeb') {
+		    stages {
+                        stage ('Rest') {
+                            agent { label 'python' }
+                            steps {
+                                echo "Limpio el workspace al inicio de la ejecución del stage"
+                                cleanWs()
+                                
+                                echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
+                                echo "${WORKSPACE}"
+                                sh '''
+                                    echo "whoami: "`whoami`
+                                    echo "hostname: "`hostname`
+                                    echo "pwd: "`pwd`
+                                '''
+                                
+                                echo "Recupero los ficheros de código necesarios:"
+                                unstash 'testRest'
+                                unstash 'pytestIni'
+                                
+                                echo "Lanzo las pruebas de integración."
+                                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                                    echo "Lanzamos las pruebas de integración."
+                                    sh '''
+                                        export PYTHONPATH=${WORKSPACE}
+                                        pytest --junit-xml=result-rest.xml test/rest
+                                    '''
+                                }
+                                junit 'result-rest.xml'
+                                
+                                echo "Limpio el workspace al final de la ejecución del stage"
+                                cleanWs()
+                            }
                         }
-                        junit 'result-rest.xml'
-                        
-                        echo "Limpio el workspace al final de la ejecución del stage"
-                        cleanWs()
+                        stage ('Performance') {
+                            agent { label 'jmeter' }
+                            steps {
+                                echo "Limpio el workspace al inicio de la ejecución del stage"
+                                cleanWs()
+                                        
+                                echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
+                                echo "${WORKSPACE}"
+                                sh '''
+                                    echo "whoami: "`whoami`
+                                    echo "hostname: "`hostname`
+                                    echo "pwd: "`pwd`
+                                '''
+                                
+                                echo "Recupero los ficheros de código necesarios:"
+                                unstash 'jmeterSamples'
+                                
+                                echo "Lanzo las pruebas de rendimiento:"
+                                sh '''
+                                    /opt/jmeter/bin/jmeter -n -t test/jmeter/flask.jmx -f -l flask.jtl
+                                '''
+                                perfReport sourceDataFiles: 'flask.jtl'
+                             
+                                echo "Limpio el workspace al final de la ejecución del stage"
+                                cleanWs()
+                            }
+                        }
                     }
                 }
                 stage ('Unit_Coverage') {
@@ -209,33 +240,6 @@ pipeline {
                         cleanWs()
                     }
                 }
-            }
-        }
-        stage ('Performance') {
-            agent { label 'jmeter' }
-            steps {
-                echo "Limpio el workspace al inicio de la ejecución del stage"
-                cleanWs()
-                        
-                echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
-                echo "${WORKSPACE}"
-                sh '''
-                    echo "whoami: "`whoami`
-                    echo "hostname: "`hostname`
-                    echo "pwd: "`pwd`
-                '''
-                
-                echo "Recupero los ficheros de código necesarios:"
-                unstash 'jmeterSamples'
-                
-                echo "Lanzo las pruebas de rendimiento:"
-                sh '''
-                    /opt/jmeter/bin/jmeter -n -t test/jmeter/flask.jmx -f -l flask.jtl
-                '''
-                perfReport sourceDataFiles: 'flask.jtl'
-             
-                echo "Limpio el workspace al final de la ejecución del stage"
-                cleanWs()
             }
         }
     }
