@@ -63,6 +63,7 @@ pipeline {
                 sh '''
                     python3 -m coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest --junit-xml=result-unit.xml test/unit
                     python3 -m coverage xml
+		    python3 -m coverage report
                 '''
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     cobertura coberturaReportFile: 'coverage.xml', 
@@ -75,6 +76,7 @@ pipeline {
                               lineCoverageTargets: '100,85,95'
                 }
                 junit 'result-unit.xml'
+                
             }
         }
         stage ('Static') {
