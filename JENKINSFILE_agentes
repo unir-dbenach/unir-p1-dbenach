@@ -35,93 +35,7 @@ pipeline {
         }
         stage ('Testing') {    // Ejecutamos en paralelo los stages que levantan la aplicación y los tests uni y rest.
             parallel {
-                stage ('Rest') {
-                    agent { label 'python' }
-                    steps {
-                        script {
-                            node ('docker') {
-                                echo "Limpio el workspace al inicio de la ejecución del stage"
-                                cleanWs()
-                            
-                                echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
-                                echo "${WORKSPACE}"
-                                sh '''
-                                    echo "whoami: "`whoami`
-                                    echo "hostname: "`hostname`
-                                    echo "pwd: "`pwd`
-                                '''
-                            
-                                echo "Recupero los ficheros de código necesarios:"
-                                unstash 'code'
-                                unstash 'wmMapping'
-                            
-                                echo "Arranco el entorno web de testing:"
-                                sh """
-                                    docker run -d --name wiremock-rest-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
-                                    docker run -d --name flask-rest-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
-                                """
-                            
-                                echo " Espero a que el entorno de pruebas esté disponible para realizar las pruebas:"
-                                sh ''' 
-                                    for i in $(seq 0 1 10); do
-                                        if nc -z 192.168.71.10 9090; then
-                                            echo "Puerto 9090 disponible. Compruebo el puerto 5000."
-                                            if nc -z 192.168.71.10 5000; then
-                                                echo "Puerto 5000 también disponible. Puedo lanzar las pruebas." 
-                                                exit 0
-                                            else
-                                                echo "El puerto 5000 aun no está levantado. Espero un segundo ($i)."
-                                            fi
-                                        else
-                                            echo "El puerto 9090 aun no está levantado. Espero un segundo. ($i)"
-                                        fi
-                                        sleep 1
-                                    done
-                                    echo "La aplicación no se ha levantado en el tiempo esperado (10 segundos). Aborto el test."
-                                    exit 1
-                                '''    
-                            }   
-                        }
-                        echo "Limpio el workspace al inicio de la ejecución del stage"
-                        cleanWs()
-                                
-                        echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
-                        echo "${WORKSPACE}"
-                        sh '''
-                            echo "whoami: "`whoami`
-                            echo "hostname: "`hostname`
-                            echo "pwd: "`pwd`
-                        '''
-                        
-                        echo "Recupero los ficheros de código necesarios:"
-                        unstash 'testRest'
-                        unstash 'pytestIni'
-                                
-                        echo "Lanzo las pruebas de integración."
-                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                            echo "Lanzamos las pruebas de integración."
-                            sh '''
-                                export PYTHONPATH=${WORKSPACE}
-                                pytest --junit-xml=result-rest.xml test/rest
-                            '''
-                        }
-                        junit 'result-rest.xml'
-                        
-                        echo "Limpio el workspace al final de la ejecución del stage"
-                        cleanWs()
-                        
-                        script {
-                            node ('docker') {
-                                echo "Paro los contenedores instanciados:"
-                                sh """
-                                    docker stop wiremock-rest-${env.BUILD_ID}
-                                    docker stop flask-rest-${env.BUILD_ID}
-                                """
-                            }
-                        }
-                    }
-                }
-                stage ('Unit_Coverage') {
+                stage ('Unit') {
                     agent { label 'python' }
                     steps {
                         echo "Limpio el workspace al inicio de la ejecución del stage"
@@ -139,23 +53,84 @@ pipeline {
                         unstash 'code'
                         unstash 'testUnit'
                         
-                        echo "Lanzo las pruebas unitarias y de cobertura:"
-                        sh '''
-                            python3 -m coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest --junit-xml=result-unit.xml test/unit
-                            python3 -m coverage xml
-                        '''
+                        echo "Lanzo las pruebas unitarias:"
                         catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                            cobertura coberturaReportFile: 'coverage.xml', 
-                                      autoUpdateHealth: false,
-                                      autoUpdateStability: false,
-                                      failUnhealthy: true,
-                                      failUnstable: false,
-                                      onlyStable: false,
-                                      conditionalCoverageTargets: '100,80,90',
-                                      lineCoverageTargets: '100,85,95'
+                            sh '''
+                                python3 -m coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest --junit-xml=result-unit.xml test/unit
+                                python3 -m coverage xml
+                            '''
                         }
+                        stash includes: 'coverage.xml', name: 'testCoverage'       // Contiene el fichero de datos de cobertura
+
                         junit 'result-unit.xml'
+
+                        echo "Limpio el workspace al final de la ejecución del stage"
+                        cleanWs()
+                    }
+                }
+                stage ('Rest') {
+                    agent { label 'web' }
+                    steps {
+                        echo "Limpio el workspace al inicio de la ejecución del stage"
+                        cleanWs()
+                            
+                        echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
+                        echo "${WORKSPACE}"
+                        sh '''
+                            echo "whoami: "`whoami`
+                            echo "hostname: "`hostname`
+                            echo "pwd: "`pwd`
+                        '''
+                            
+                        echo "Recupero los ficheros de código necesarios:"
+                        unstash 'code'
+                        unstash 'wmMapping'
+                        unstash 'testRest'
+                        unstash 'pytestIni'
+                            
+                        echo "Arranco el entorno web de testing:"
+                        sh """
+                            docker run -d --name wiremock-rest-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
+                            docker run -d --name flask-rest-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
+                        """
+                            
+                        echo " Espero a que el entorno de pruebas esté disponible para realizar las pruebas:"
+                        sh ''' 
+                            for i in $(seq 0 1 10); do
+                                if nc -z 192.168.71.10 9090; then
+                                    echo "Puerto 9090 disponible. Compruebo el puerto 5000."
+                                    if nc -z 192.168.71.10 5000; then
+                                        echo "Puerto 5000 también disponible. Puedo lanzar las pruebas." 
+                                        exit 0
+                                    else
+                                        echo "El puerto 5000 aun no está levantado. Espero un segundo ($i)."
+                                    fi
+                                else
+                                    echo "El puerto 9090 aun no está levantado. Espero un segundo. ($i)"
+                                fi
+                                sleep 1
+                            done
+                            echo "La aplicación no se ha levantado en el tiempo esperado (10 segundos). Aborto el test."
+                            exit 1
+                        '''    
                         
+                                
+                        echo "Lanzo las pruebas de integración."
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            echo "Lanzamos las pruebas de integración."
+                            sh '''
+                                export PYTHONPATH=${WORKSPACE}
+                                pytest --junit-xml=result-rest.xml test/rest
+                            '''
+                        }
+                        junit 'result-rest.xml'
+                        
+                        echo "Paro los contenedores instanciados:"
+                        sh """
+                            docker stop wiremock-rest-${env.BUILD_ID}
+                            docker stop flask-rest-${env.BUILD_ID}
+                        """
+
                         echo "Limpio el workspace al final de la ejecución del stage"
                         cleanWs()
                     }
@@ -217,57 +192,12 @@ pipeline {
                 }
             }
         }
-        stage ('Performance') {
-            agent { label 'jmeter' }
+        stage ('Coverage') {
+            agent { label 'python' }
             steps {
-                script {
-                    node ('docker') {
-                        echo "Limpio el workspace al inicio de la ejecución del stage"
-                        cleanWs()
-                    
-                        echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
-                        echo "${WORKSPACE}"
-                        sh '''
-                            echo "whoami: "`whoami`
-                            echo "hostname: "`hostname`
-                            echo "pwd: "`pwd`
-                        '''
-                    
-                        echo "Recupero los ficheros de código necesarios:"
-                        unstash 'code'
-                        unstash 'wmMapping'
-                    
-                        echo "Arranco el entorno web de testing:"
-                        sh """
-                            docker run -d --name wiremock-perf-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
-                            docker run -d --name flask-perf-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
-                        """
-                    
-                        echo " Espero a que el entorno de pruebas esté disponible para realizar las pruebas:"
-                        sh ''' 
-                            for i in $(seq 0 1 10); do
-                                if nc -z 192.168.71.10 9090; then
-                                    echo "Puerto 9090 disponible. Compruebo el puerto 5000."
-                                    if nc -z 192.168.71.10 5000; then
-                                        echo "Puerto 5000 también disponible. Puedo lanzar las pruebas." 
-                                        exit 0
-                                    else
-                                        echo "El puerto 5000 aun no está levantado. Espero un segundo ($i)."
-                                    fi
-                                else
-                                    echo "El puerto 9090 aun no está levantado. Espero un segundo. ($i)"
-                                fi
-                                sleep 1
-                            done
-                            echo "La aplicación no se ha levantado en el tiempo esperado (10 segundos). Aborto el test."
-                            exit 1
-                        '''    
-                    }   
-                }
-                        
                 echo "Limpio el workspace al inicio de la ejecución del stage"
                 cleanWs()
-                        
+                
                 echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
                 echo "${WORKSPACE}"
                 sh '''
@@ -277,7 +207,69 @@ pipeline {
                 '''
                 
                 echo "Recupero los ficheros de código necesarios:"
+                unstash 'code'
+                unstash 'testCoverage'
+                
+                echo "Lanzo las pruebas de cobertura:"
+                catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                    cobertura coberturaReportFile: 'coverage.xml', 
+                              autoUpdateHealth: false,
+                              autoUpdateStability: false,
+                              failUnhealthy: true,
+                              failUnstable: false,
+                              onlyStable: false,
+                              conditionalCoverageTargets: '100,80,90',
+                              lineCoverageTargets: '100,85,95'
+                }
+                
+                echo "Limpio el workspace al final de la ejecución del stage"
+                cleanWs()
+            }
+        }
+        stage ('Performance') {
+            agent { label 'jmeter' }
+            steps {
+                echo "Limpio el workspace al inicio de la ejecución del stage"
+                cleanWs()
+                
+                echo "Datos de ejecución en el stage ${env.STAGE_NAME}:"
+                echo "${WORKSPACE}"
+                sh '''
+                    echo "whoami: "`whoami`
+                    echo "hostname: "`hostname`
+                    echo "pwd: "`pwd`
+                '''
+                
+                echo "Recupero los ficheros de código necesarios:"
+                unstash 'code'
+                unstash 'wmMapping'
                 unstash 'jmeterSamples'
+                
+                echo "Arranco el entorno web de testing:"
+                sh """
+                    docker run -d --name wiremock-perf-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
+                    docker run -d --name flask-perf-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
+                """
+                
+                echo " Espero a que el entorno de pruebas esté disponible para realizar las pruebas:"
+                sh ''' 
+                    for i in $(seq 0 1 10); do
+                        if nc -z 192.168.71.10 9090; then
+                            echo "Puerto 9090 disponible. Compruebo el puerto 5000."
+                            if nc -z 192.168.71.10 5000; then
+                                echo "Puerto 5000 también disponible. Puedo lanzar las pruebas." 
+                                exit 0
+                            else
+                                echo "El puerto 5000 aun no está levantado. Espero un segundo ($i)."
+                            fi
+                        else
+                            echo "El puerto 9090 aun no está levantado. Espero un segundo. ($i)"
+                        fi
+                        sleep 1
+                    done
+                    echo "La aplicación no se ha levantado en el tiempo esperado (10 segundos). Aborto el test."
+                    exit 1
+                '''    
                 
                 echo "Lanzo las pruebas de rendimiento:"
                 sh '''
@@ -285,29 +277,13 @@ pipeline {
                 '''
                 perfReport sourceDataFiles: 'flask.jtl'
              
-                echo "Limpio el workspace al final de la ejecución del stage"
+                echo "Paro los contenedores instanciados:"
+                sh """
+                    docker stop wiremock-perf-${env.BUILD_ID}
+                    docker stop flask-perf-${env.BUILD_ID}
+                """
+                    echo "Limpio el workspace al final de la ejecución del stage"
                 cleanWs()
-                
-                script {
-                    node ('docker') {
-                        echo "Paro los contenedores instanciados:"
-                        sh """
-                            docker stop wiremock-perf-${env.BUILD_ID}
-                            docker stop flask-perf-${env.BUILD_ID}
-                        """
-                    }
-                }
-            }
-        }
-    }
-    post {
-        always {
-            script {
-                echo "Ejecuto el post para limpiar la ejecución del pipeline (esta sección se ejecuta siempre aunque el build se marque como fallido):"
-                node('docker') {
-                    echo "Limpio el workspace"
-                    deleteDir()
-                }
             }
         }
     }
