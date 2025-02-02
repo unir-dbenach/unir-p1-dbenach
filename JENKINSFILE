@@ -13,13 +13,13 @@ pipeline {
                 git url: 'https://github.com/unir-dbenach/unir-p1-dbenach.git'
             }
         }
-        stage ('IniciaEntornoWeb') {
+        stage ('Rest') {
             agent { label 'Agent1' }
             steps {
                 echo "Arranco el entorno web de testing:"
                 sh """
-                    docker run -d --name wiremock-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
-                    docker run -d --name flask-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
+                    docker run -d --name wiremock-rest-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
+                    docker run -d --name flask-rest-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
                 """
                 echo " Espero a que el entorno de pruebas esté disponible para realizar las pruebas:"
                 sh ''' 
@@ -39,21 +39,21 @@ pipeline {
                     done
                     echo "La aplicación no se ha levantado en el tiempo esperado (10 segundos). Aborto el test."
                     exit 1
-                '''    
-            }   
-        }
-        stage ('Rest') {
-            agent { label 'Agent1' }
-            steps {
-                echo "Lanzo las pruebas de integración."
+                '''
+                echo "Lanzamos las pruebas de integración."
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                    echo "Lanzamos las pruebas de integración."
                     sh '''
                         export PYTHONPATH=${WORKSPACE}
                         pytest --junit-xml=result-rest.xml test/rest
                     '''
                 }
                 junit 'result-rest.xml'
+                    
+                echo "Paro los contenedores instanciados:"
+                sh """
+                    docker stop wiremock-rest-${env.BUILD_ID}
+                    docker stop flask-rest-${env.BUILD_ID}
+                """
             }
         }
         stage ('Unit_Coverage') {
@@ -63,6 +63,7 @@ pipeline {
                 sh '''
                     python3 -m coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest --junit-xml=result-unit.xml test/unit
                     python3 -m coverage xml
+        		    python3 -m coverage report
                 '''
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     cobertura coberturaReportFile: 'coverage.xml', 
@@ -75,6 +76,7 @@ pipeline {
                               lineCoverageTargets: '100,85,95'
                 }
                 junit 'result-unit.xml'
+                
             }
         }
         stage ('Static') {
@@ -100,11 +102,41 @@ pipeline {
         stage ('Performance') {
             agent { label 'Agent1' }
             steps {
+                echo "Arranco el entorno web de testing:"
+                sh """
+                    docker run -d --name wiremock-perf-${env.BUILD_ID} --rm -p 9090:8080 -v ${WORKSPACE}/test/wiremock:/home/wiremock wiremock/wiremock:latest
+                    docker run -d --name flask-perf-${env.BUILD_ID} --rm -p 5000:5000  -e FLASK_APP=app/api.py -e PYTHONPATH=/app -v ${WORKSPACE}:/app flask
+                """
+                echo " Espero a que el entorno de pruebas esté disponible para realizar las pruebas:"
+                sh ''' 
+                    for i in $(seq 0 1 10); do
+                        if nc -z 192.168.71.10 9090; then
+                            echo "Puerto 9090 disponible. Compruebo el puerto 5000."
+                            if nc -z 192.168.71.10 5000; then
+                                echo "Puerto 5000 también disponible. Puedo lanzar las pruebas." 
+                                exit 0
+                            else
+                                echo "El puerto 5000 aun no está levantado. Espero un segundo ($i)."
+                            fi
+                        else
+                            echo "El puerto 9090 aun no está levantado. Espero un segundo. ($i)"
+                        fi
+                        sleep 1
+                    done
+                    echo "La aplicación no se ha levantado en el tiempo esperado (10 segundos). Aborto el test."
+                    exit 1
+                '''    
                 echo "Lanzo las pruebas de rendimiento:"
                 sh '''
                     /opt/jmeter/bin/jmeter -n -t test/jmeter/flask.jmx -f -l flask.jtl
                 '''
                 perfReport sourceDataFiles: 'flask.jtl'
+                    
+                echo "Paro los contenedores instanciados:"
+                sh """
+                    docker stop wiremock-perf-${env.BUILD_ID}
+                    docker stop flask-perf-${env.BUILD_ID}
+                """
             }
         }
     }
@@ -113,11 +145,6 @@ pipeline {
             script {
                 echo "Ejecuto el post para limpiar la ejecución del pipeline (esta sección se ejecuta siempre aunque el build se marque como fallido):"
                 node('Agent1') {
-                    echo "Paro los contenedores instanciados:"
-                    sh """
-                        docker stop wiremock-${env.BUILD_ID}
-                        docker stop flask-${env.BUILD_ID}
-                    """
                     echo "Limpio el workspace del agente1"
                     deleteDir()
                 }
