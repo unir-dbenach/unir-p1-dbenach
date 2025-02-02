@@ -10,7 +10,7 @@ pipeline {
                 echo "Limpio el workspace:"
                 cleanWs()
                 echo "Bajo el código del depósito de GitHub:"
-                git branch: feature_fix_coverage, url: 'https://github.com/unir-dbenach/unir-p1-dbenach.git'
+                git branch: 'feature_fix_coverage', url: 'https://github.com/unir-dbenach/unir-p1-dbenach.git'
             }
         }
         stage ('Rest') {
