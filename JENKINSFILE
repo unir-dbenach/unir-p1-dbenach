@@ -63,7 +63,6 @@ pipeline {
                 sh '''
                     python3 -m coverage run --branch --source=app --omit=app/__init__.py,app/api.py -m pytest --junit-xml=result-unit.xml test/unit
                     python3 -m coverage xml
-        		    python3 -m coverage report
                 '''
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                     cobertura coberturaReportFile: 'coverage.xml', 
@@ -95,7 +94,7 @@ pipeline {
                 echo "Lanzo las pruebas de seguridad:"
                 sh '''
                     python3 -m bandit --exit-zero  -r . -f custom -o bandit.out --msg-template "{abspath}:{line}: [{test_id}] {msg}"
-                    '''
+                '''
                 recordIssues enabledForFailure: true, tools: [pyLint(name: 'Bandit', pattern: 'bandit.out')], qualityGates: [[threshold: 2, type: 'TOTAL', unstable: true], [threshold: 4, type: 'TOTAL', unstable: false]]
             }
         }
