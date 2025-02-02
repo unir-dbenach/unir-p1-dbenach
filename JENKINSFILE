@@ -10,7 +10,7 @@ pipeline {
                 echo "Limpio el workspace:"
                 cleanWs()
                 echo "Bajo el código del depósito de GitHub:"
-                git url: 'https://github.com/unir-dbenach/unir-p1-dbenach.git'
+                git branch: 'feature_fix_coverage', url: 'https://github.com/unir-dbenach/unir-p1-dbenach.git'
             }
         }
         
@@ -74,7 +74,7 @@ pipeline {
             agent { label 'Agent1' }
             steps {
                 echo "Lanzo las pruebas de cobertura:"
-                ssh '''
+                sh '''
                     python3 -m coverage report
 	        '''
                 catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
