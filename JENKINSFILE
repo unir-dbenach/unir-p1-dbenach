@@ -151,15 +151,4 @@ pipeline {
             }
         }
     }
-    post {
-        always {
-            script {
-                echo "Ejecuto el post para limpiar la ejecución del pipeline (esta sección se ejecuta siempre aunque el build se marque como fallido):"
-                node('Agent1') {
-                    echo "Limpio el workspace del agente1"
-                    deleteDir()
-                }
-            }
-        }
-    }
 }
